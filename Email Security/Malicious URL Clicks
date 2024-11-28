@@ -1,0 +1,7 @@
+
+Malicious URL clicks:
+let messageids= EmailEvents
+| where SenderFromAddress contains "whit@thehballiance.com" | distinct NetworkMessageId;
+UrlClickEvents
+| where NetworkMessageId has_any (messageids)
+| project TimeGenerated, Type, Url, ActionType, AccountUpn, Workload, NetworkMessageId, IPAddress
