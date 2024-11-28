@@ -1,0 +1,11 @@
+SecurityAlert
+| where TimeGenerated >= ago(30d)
+| where DisplayName !startswith("TEST") and AlertSeverity != "Informational"
+| summarize ["AlertCount"]=count() by AlertSeverity, bin(TimeGenerated, 1d)
+| render timechart with (
+    title="Daily Security Alerts Count",
+    xtitle="Date",
+    ytitle="Alert Count",
+    ysplit=panels
+    )
+
