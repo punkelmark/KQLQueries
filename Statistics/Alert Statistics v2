@@ -1,0 +1,7 @@
+SecurityAlert
+| where TimeGenerated >= ago(30d)
+| where DisplayName !startswith("TEST") and AlertSeverity != "Informational"
+| summarize ["AlertCount"]=count() by DisplayName, AlertSeverity
+| top 10 by AlertCount
+| render piechart 
+
