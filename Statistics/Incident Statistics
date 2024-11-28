@@ -1,0 +1,11 @@
+SecurityIncident
+| where TimeGenerated >= ago(30d)
+| summarize count() by Severity, bin(TimeGenerated, 1d)
+| where Severity != "Informational"
+| render timechart with (
+    title="Daily Security Incidents Count",
+    xtitle="Date",
+    ytitle="Incident Count",
+    ysplit=panels
+    )
+
