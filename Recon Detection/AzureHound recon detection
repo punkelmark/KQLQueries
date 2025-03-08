@@ -1,0 +1,48 @@
+// This query identifies graph activity logs for potential azurehound graph queries, this is based on research from -> https://www.cloudbrothers.info/detect-threats-microsoft-graph-logs-part-1/
+// To add on top of the original query, I try to correlate this with MicrosoftTI for any hits of suspicious IP addresses
+
+// This is an ongoing custom query being worked on to further customize by providing enriched data applicable for our tenant. Will continue to modify and create custom query different from original author.
+
+// Author: Elmark Corpus
+// Status: IN PROGRESS
+// Credits to: https://www.cloudbrothers.info/ (author of original query)
+
+let AzureHoundGraphQueries = dynamic([
+    "https://graph.microsoft.com/beta/servicePrincipals/<UUID>/owners",
+    "https://graph.microsoft.com/beta/groups/<UUID>/owners",
+    "https://graph.microsoft.com/beta/groups/<UUID>/members",
+    "https://graph.microsoft.com/v1.0/servicePrincipals/<UUID>/appRoleAssignedTo",
+    "https://graph.microsoft.com/beta/applications/<UUID>/owners",
+    "https://graph.microsoft.com/beta/devices/<UUID>/registeredOwners",
+    "https://graph.microsoft.com/v1.0/users",
+    "https://graph.microsoft.com/v1.0/applications",
+    "https://graph.microsoft.com/v1.0/groups",
+    "https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignments",
+    "https://graph.microsoft.com/v1.0/roleManagement/directory/roleDefinitions",
+    "https://graph.microsoft.com/v1.0/devices",
+    "https://graph.microsoft.com/v1.0/organization",
+    "https://graph.microsoft.com/v1.0/servicePrincipals"
+    ]);
+MicrosoftGraphActivityLogs
+//| where ingestion_time() > ago(35m)
+| where TimeGenerated >= ago(14d)
+| extend ObjectId = iff(isempty(UserId), ServicePrincipalId, UserId)
+| extend ObjectType = iff(isempty(UserId), "ServicePrincipalId", "UserId")
+| where RequestUri !has "microsoft.graph.delta"
+| extend NormalizedRequestUri = replace_regex(RequestUri, @'[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}', @'<UUID>')
+| extend NormalizedRequestUri = replace_regex(NormalizedRequestUri, @'\?.*$', @'')
+| summarize
+    GraphEndpointsCalled = make_set(NormalizedRequestUri, 1000),
+    IPAddresses = make_set(IPAddress)
+    by ObjectId, ObjectType
+| project
+    ObjectId,
+    ObjectType,
+    IPAddresses,
+    MatchingQueries=set_intersect(AzureHoundGraphQueries, GraphEndpointsCalled)
+| extend ConfidenceScore = round(todouble(array_length(MatchingQueries)) / todouble(array_length(AzureHoundGraphQueries)), 1)
+| where ConfidenceScore > 0.7
+| project IPAddresses
+| mv-expand IPAddresses
+| distinct IPs=tostring(IPAddresses)
+| join kind=rightanti ThreatIntelligenceIndicator on $left.IPs==$right.NetworkSourceIP
