@@ -1,0 +1,28 @@
+// Author: Elmark Corpus
+// Description: Custom query modified on top of a out-of-the-box analytic rule from Microsoft Sentinel. This checks inbound network sessions based on
+// a specific time period, checking if connections to a specific destination port number surpass a specific threshold
+// Original query was throwing false positives, infrastructure frequently has legitimate scanning activities (tenable, lansweeper, etc)
+// Custom query correlates with DeviceLogonEvents to check internal account names and if source network connections are expected or suspicious. Can be a good detection analytic for potential lateral movement or internal recon coming from compromised endpoints.
+
+
+// The query_now parameter represents the time (in UTC) at which the scheduled analytics rule ran to produce this alert. 
+set query_now = datetime(2024-11-25T07:47:03.5513380Z); 
+let lookback = 1h; 
+let threshold = 20; 
+let Results = materialize( 
+_Im_NetworkSession(starttime=ago(lookback), endtime=now()) 
+| where NetworkDirection == "Inbound" 
+| where DstPortNumber != 9000 
+| where DstAppName !contains "ZSATunnel.exe" 
+| extend SrcIPs = trim_start("::ffff:",SrcIpAddr) 
+| summarize SrcIPs=make_set(SrcIPs, 100), DstIPs=make_set(DstIpAddr, 100) by DstPortNumber 
+| where array_length(DstIPs) > threshold 
+); 
+DeviceLogonEvents 
+| join kind=inner ( 
+    Results 
+    | mv-expand ["RemoteIP"]=SrcIPs 
+    | extend RemoteIP = tostring(RemoteIP) 
+    | where RemoteIP != "127.0.0.1" 
+    ) on RemoteIP 
+| distinct AccountName, RemoteIP 
