@@ -4,7 +4,6 @@
 // This is an ongoing custom query being worked on to further customize by providing enriched data applicable for our tenant. Will continue to modify and create custom query different from original author.
 
 // Author: Elmark Corpus
-// Status: IN PROGRESS
 // Credits to: https://www.cloudbrothers.info/ (author of original query)
 
 let AzureHoundGraphQueries = dynamic([
@@ -42,7 +41,6 @@ MicrosoftGraphActivityLogs
     MatchingQueries=set_intersect(AzureHoundGraphQueries, GraphEndpointsCalled)
 | extend ConfidenceScore = round(todouble(array_length(MatchingQueries)) / todouble(array_length(AzureHoundGraphQueries)), 1)
 | where ConfidenceScore > 0.7
-| project IPAddresses
-| mv-expand IPAddresses
-| distinct IPs=tostring(IPAddresses)
-| join kind=rightanti ThreatIntelligenceIndicator on $left.IPs==$right.NetworkSourceIP
+| mv-expand IPs=IPAddresses
+| distinct IPs=tostring(IPs)
+| join kind=leftouter (ThreatIntelligenceIndicator | project ThreatType, NetworkSourceIP) on $left.IPs==$right.NetworkSourceIP
