@@ -45,11 +45,13 @@ MicrosoftGraphActivityLogs
     MatchingQueries=set_intersect(AzureHoundGraphQueries, GraphEndpointsCalled)
 | extend ConfidenceScore = round(todouble(array_length(MatchingQueries)) / todouble(array_length(AzureHoundGraphQueries)), 1)
 | where ConfidenceScore > 0.7
-| join kind=inner (IdentityInfo
+| join kind=inner ( // Correlate info with IdentityInfo to get principal name of objectID who initaited the graph requests
+    IdentityInfo
     | where TimeGenerated > ago(timeRange)
     | summarize arg_max(TimeGenerated, *) by AccountObjectId
     | project AccountObjectId, AccountUPN)
     on $left.ObjectId==$right.AccountObjectId
 | mv-expand IPAddresses
 | extend IPs = tostring(IPAddresses)
-| join kind=innerunique  (ThreatIntelligenceIndicator | project ThreatType, NetworkSourceIP) on $left.IPs==$right.NetworkSourceIP
+| join kind=innerunique  (ThreatIntelligenceIndicator | project ThreatType, NetworkSourceIP) on $left.IPs==$right.NetworkSourceIP // Correlate with ThreatIntelligenceIndicator to check for malicious/suspicious source IP hits
+
