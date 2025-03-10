@@ -44,4 +44,4 @@ MicrosoftGraphActivityLogs
 | where ConfidenceScore > 0.7
 | mv-expand IPs=IPAddresses
 | distinct IPs=tostring(IPs)
-| join kind=leftouter (ThreatIntelligenceIndicator | project ThreatType, NetworkSourceIP) on $left.IPs==$right.NetworkSourceIP
+| join kind=innerunique (ThreatIntelligenceIndicator | project ThreatType, NetworkSourceIP) on $left.IPs==$right.NetworkSourceIP // correlate IPs with ThreatIntelligence table
