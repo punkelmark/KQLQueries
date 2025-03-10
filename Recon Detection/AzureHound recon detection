@@ -1,4 +1,5 @@
 // This query identifies graph activity logs for potential azurehound graph queries, this is based on research from -> https://www.cloudbrothers.info/detect-threats-microsoft-graph-logs-part-1/
+// Query checks entities requesting to list of graph endpoints which may be similar with AzureHound graph queries (when using AzureHound v2.1.0)
 // To add on top of the original query, I try to correlate this with MicrosoftTI for any hits of suspicious IP addresses
 
 // This is an ongoing custom query being worked on to further customize by providing enriched data applicable for our tenant. Will continue to modify and create custom query different from original author.
