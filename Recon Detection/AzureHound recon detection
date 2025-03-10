@@ -28,6 +28,7 @@ let AzureHoundGraphQueries = dynamic([
     ]);
 MicrosoftGraphActivityLogs
 //| where ingestion_time() > ago(35m)
+//| where UserAgent has "azurehound" // uncomment to check for any useragents using AzureHound
 | where TimeGenerated >= ago(timeRange)
 | extend ObjectId = iff(isempty(UserId), ServicePrincipalId, UserId)
 | extend ObjectType = iff(isempty(UserId), "ServicePrincipalId", "UserId")
