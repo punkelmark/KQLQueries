@@ -1,12 +1,15 @@
 // This query identifies graph activity logs for potential azurehound graph queries, this is based on research from -> https://www.cloudbrothers.info/detect-threats-microsoft-graph-logs-part-1/
 // Query checks entities requesting to list of graph endpoints which may be similar with AzureHound graph queries (when using AzureHound v2.1.0)
-// To add on top of the original query, I try to correlate this with MicrosoftTI for any hits of suspicious IP addresses
 
-// This is an ongoing custom query being worked on to further customize by providing enriched data applicable for our tenant. Will continue to modify and create custom query different from original author.
+// To add on top of the original query, I try to correlate this with MicrosoftTI for any hits of suspicious IP addresses, and IdentityInfo to possibly identify source of the requests
+
+
+// This is an ongoing custom query being worked on to further customize by providing enriched data applicable for our tenant. Will continue to modify.
 
 // Author: Elmark Corpus
 // Credits to: https://www.cloudbrothers.info/ (author of original query)
 
+let timeRange = 14d;
 let AzureHoundGraphQueries = dynamic([
     "https://graph.microsoft.com/beta/servicePrincipals/<UUID>/owners",
     "https://graph.microsoft.com/beta/groups/<UUID>/owners",
@@ -25,7 +28,7 @@ let AzureHoundGraphQueries = dynamic([
     ]);
 MicrosoftGraphActivityLogs
 //| where ingestion_time() > ago(35m)
-| where TimeGenerated >= ago(14d)
+| where TimeGenerated >= ago(timeRange)
 | extend ObjectId = iff(isempty(UserId), ServicePrincipalId, UserId)
 | extend ObjectType = iff(isempty(UserId), "ServicePrincipalId", "UserId")
 | where RequestUri !has "microsoft.graph.delta"
@@ -33,7 +36,7 @@ MicrosoftGraphActivityLogs
 | extend NormalizedRequestUri = replace_regex(NormalizedRequestUri, @'\?.*$', @'')
 | summarize
     GraphEndpointsCalled = make_set(NormalizedRequestUri, 1000),
-    IPAddresses = make_set(IPAddress)
+    IPAddresses = make_set(IPAddress, 100)
     by ObjectId, ObjectType
 | project
     ObjectId,
@@ -42,6 +45,11 @@ MicrosoftGraphActivityLogs
     MatchingQueries=set_intersect(AzureHoundGraphQueries, GraphEndpointsCalled)
 | extend ConfidenceScore = round(todouble(array_length(MatchingQueries)) / todouble(array_length(AzureHoundGraphQueries)), 1)
 | where ConfidenceScore > 0.7
-| mv-expand IPs=IPAddresses
-| distinct IPs=tostring(IPs)
-| join kind=innerunique (ThreatIntelligenceIndicator | project ThreatType, NetworkSourceIP) on $left.IPs==$right.NetworkSourceIP // correlate IPs with ThreatIntelligence table
+| join kind=inner (IdentityInfo
+    | where TimeGenerated > ago(timeRange)
+    | summarize arg_max(TimeGenerated, *) by AccountObjectId
+    | project AccountObjectId, AccountUPN)
+    on $left.ObjectId==$right.AccountObjectId
+| mv-expand IPAddresses
+| extend IPs = tostring(IPAddresses)
+| join kind=innerunique  (ThreatIntelligenceIndicator | project ThreatType, NetworkSourceIP) on $left.IPs==$right.NetworkSourceIP
