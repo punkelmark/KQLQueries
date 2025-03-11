@@ -1,0 +1,22 @@
+// Title: MFA Sweep detection
+// Author: Elmark Corpus
+// Description: This KQL query checks for successive failed authentication attempts with distinct characteristics (UserAgent, Operating System, Browser). Any spike of failed attempts within an authentication window using random sign-in characteristics will be flagged and is usually indicative of MFASweep attempts as demonstrated here: https://github.com/dafthack/MFASweep.
+
+let authenticationWindow = 2m; // Quick sweep usually happens 1-2 minutes per account
+SigninLogs
+| extend OS=tostring(DeviceDetail.operatingSystem)
+| extend Browser=tostring(DeviceDetail.browser)
+| where ResultType != 0 // Unsuccessful log-ins
+| summarize 
+    FailedAttempts=count(), 
+    DistinctUserAgents=dcount(UserAgent),
+    DistinctOS=dcount(OS),
+    DistinctBrowser=dcount(Browser),
+    ListOfSourceIPs=make_set(IPAddress, 10), 
+    ListOfUserAgents=make_set(UserAgent, 10), 
+    ListOfOS=make_set(OS, 10), 
+    ListOfBrowsers=make_set(Browser, 10),
+    Duration=max(TimeGenerated)-min(TimeGenerated) 
+    by UserPrincipalName, bin(TimeGenerated, authenticationWindow)
+| where DistinctUserAgents > 5 or DistinctOS > 5 or DistinctBrowser > 5
+| project TargetUser=UserPrincipalName, Duration, FailedAttempts, ListOfSourceIPs, DistinctUserAgents, DistinctOS, DistinctBrowser, ListOfUserAgents, ListOfOS, ListOfBrowsers
