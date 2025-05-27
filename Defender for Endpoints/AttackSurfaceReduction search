@@ -1,0 +1,6 @@
+// Search for ASR rule ID based on here to determine appropriate policy action to modify => https://learn.microsoft.com/en-us/defender-endpoint/attack-surface-reduction-rules-reference#block-all-office-applications-from-creating-child-processes
+
+DeviceEvents
+//| where DeviceName contains "mkuwlp945" // Narrow search based on affected device
+| where ActionType contains 'asr'
+| project TimeGenerated, ActionType, RuleId=AdditionalFields.RuleId,  FileName, FolderPath, InitiatingProcessCommandLine, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessParentFileName, InitiatingProcessSHA256, ProcessCommandLine
