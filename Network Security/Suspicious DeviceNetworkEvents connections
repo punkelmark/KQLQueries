@@ -1,4 +1,4 @@
-// DeviceNetworkEvents, search for suspicious network connections. Applicable query for investigation when checking port scanning related incidents
+// Checkes DeviceNetworkEvents table - search for suspicious network connections, applicable query for investigation when checking port scanning related incidents
 
 DeviceNetworkEvents
 | where TimeGenerated >= ago(3d)
