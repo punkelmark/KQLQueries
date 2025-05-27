@@ -1,0 +1,8 @@
+// DeviceNetworkEvents, search for suspicious network connections. Applicable query for investigation when checking port scanning related incidents
+
+DeviceNetworkEvents
+| where TimeGenerated >= ago(3d)
+| search '50.50.50.156'
+| project TimeGenerated, DeviceName, RemoteIP, RemotePort, RemoteUrl, LocalIP, LocalPort, InitiatingProcessCommandLine, InitiatingProcessFileName
+| where not(RemotePort in (443, 53))
+| where LocalPort != 9000
