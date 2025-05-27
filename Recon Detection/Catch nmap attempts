@@ -1,0 +1,27 @@
+DeviceNetworkEvents
+| search 'nmap'
+| project
+    TimeGenerated,
+    ActionType,
+    AdditionalFields,
+    DeviceName,
+    InitiatingProcessAccountUpn,
+    InitiatingProcessCommandLine,
+    InitiatingProcessFileName,
+    InitiatingProcessFolderPath,
+    InitiatingProcessParentFileName,
+    LocalIP,
+    LocalPort,
+    RemoteIP,
+    RemotePort,
+    RemoteUrl,
+    Protocol
+| summarize count()
+    by
+    LocalIP,
+    RemotePort,
+    ActionType,
+    DeviceName,
+    InitiatingProcessAccountUpn,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine
