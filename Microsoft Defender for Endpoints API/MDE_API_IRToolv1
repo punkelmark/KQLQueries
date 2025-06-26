@@ -17,6 +17,8 @@ import os
 from datetime import datetime, timedelta
 
 def get_aadToken():
+
+    # Hard-coding is often not a good practice, this is usually integrated with some secrets manager to pull sensitive info, will improve handling for this in the future
     tenantId = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" # Paste  tenant ID here 
     appId = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" # Paste app ID here 
     appSecret = "xxxxxxxx~xxxxxxxxxxxxxxxxxx-xxxxxxxxxxxxxx" # Paste app secret here
@@ -51,7 +53,6 @@ def get_aadToken():
 def get_MachineID(DeviceName):
     
     aadToken = get_aadToken() # Get a valid auth token
-    
     url = "https://api.securitycenter.microsoft.com/api/machines?$filter=startswith(computerDnsName,'%s')" % (DeviceName)
 
     headers = {
@@ -118,7 +119,6 @@ def get_MachineActions(DeviceName):
 def get_InstalledSoftware(DeviceName):
 
     aadToken = get_aadToken()
-
     MachineID = get_MachineID(DeviceName)
     if MachineID == 0: return 0
 
@@ -207,8 +207,8 @@ def get_InvestigationPackageURi(MachineID):
         print("Collection investigation package is still pending or you may have supplied the incorrect ID. Please try again.")
 
 def run_AntivirusScan(DeviceName, Comment, ScanType):
+
     aadToken = get_aadToken() # Get a valid auth token
-    
     MachineID = get_MachineID(DeviceName)
     if MachineID == 0: return 0
     
@@ -277,7 +277,6 @@ def run_IsolateDevice(DeviceName, Comment, IsolationType):
 def run_UnisolateDevice(DeviceName, Comment):
 
     aadToken = get_aadToken() # Get a valid auth token
-    
     MachineID = get_MachineID(DeviceName)
     if MachineID == 0: return 0
     
@@ -394,8 +393,6 @@ def validateIRAction(action):
     else: print("Invalid option. Please try again.")
         
 if __name__ == '__main__':
-
-    # other items => 1. mass scanning, 2. getting AV scan reports/findings 3. getting machine state
 
     while True:
         print("\n========================================================")
