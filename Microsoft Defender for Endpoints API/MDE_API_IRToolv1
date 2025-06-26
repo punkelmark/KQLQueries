@@ -1,6 +1,6 @@
 #
 # Title: MDE IR Action Script
-# Description: This script provides a set of functions to interact with Microsoft Defender for Endpoint API for Incident Response (IR) actions.
+# Description: This script written in Python provides a set of functions to interact with Microsoft Defender for Endpoint API for Incident Response (IR) actions.
 # Author: Elmark Corpus
 # Creation Date: 2025-06-20
 # Version: 1.0
