@@ -3,25 +3,31 @@
 # Description: This script written in Python provides a set of functions to interact with Microsoft Defender for Endpoint API for Incident Response (IR) actions.
 # Author: Elmark Corpus
 # Creation Date: 2025-06-20
-# Version: 1.0
+# Version: 1.2
 #
 # This version provides basic machine actions for automating incident response such as single device scan, collecting investigation packages, device isolation, listing installed software and getting machine actions history
 # This is a work in progress (WIP) to continue in innovating workflows for streamlining incident response by leverage MDE APIs
 #
+# NOTE: Run this to install requests library as it is used in some parts -> pip install requests
+#
+# v 1.1 - Added multiple AV scan - 6/27/2025
+# v 1.2 - Added capability to upload and scripts in LR library - 7/8/2025
+#                
 
 import json
 import urllib.request
 import urllib.parse
+import requests
 import sys
+import csv
 import os
-from datetime import datetime, timedelta
 
 def get_aadToken():
 
-    # Hard-coding is often not a good practice, this is usually integrated with some secrets manager to pull sensitive info, will improve handling for this in the future
-    tenantId = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" # Paste  tenant ID here 
-    appId = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" # Paste app ID here 
-    appSecret = "xxxxxxxx~xxxxxxxxxxxxxxxxxx-xxxxxxxxxxxxxx" # Paste app secret here
+    # Hard-coding is NOT a good practice, this is usually integrated with some secrets manager to pull sensitive info - will improve handling for this in the future
+    tenantId = "########-####-####-####-############" # Paste  tenant ID here 
+    appId = "########-####-####-####-############" # Paste app ID here 
+    appSecret = "########-####-####-####-############" # Paste app secret here
     
     resourceAppIdUri = "https://api.securitycenter.microsoft.com"
     url = "https://login.microsoftonline.com/%s/oauth2/token" % (tenantId)
@@ -41,13 +47,10 @@ def get_aadToken():
         aadToken = jsonResponse['access_token'] # Extract the access token from the response
         response.close() # Close the HTTP response to free up resources
         
-        # print("AAD Token retrieved successfully.") # For debugging purposes ...
-        # print("AAD Token: ", aadToken)
         return aadToken # Return the AAD token
 
     except Exception as e:
-        # print("Failed to retrieve a valid token.")
-        print("An error occured: ", str(e))        
+        print("An error occured: ", str(e))  
         sys.exit(1) # Better to exit script on error
 
 def get_MachineID(DeviceName):
@@ -64,27 +67,23 @@ def get_MachineID(DeviceName):
         request = urllib.request.Request(url, headers=headers)
         response = urllib.request.urlopen(request)
         jsonResponse = json.loads(response.read())
-        
-        if 'value' not in jsonResponse or len(jsonResponse['value']) == 0: 
-            print("\nMachine not found with the name ", DeviceName)
-            return 0 # return 0 if no machine found
-                
-        MachineID = jsonResponse['value'][0]['id']
         response.close() # Close the HTTP response to free up resources
-        
-        return MachineID # Return the Machine ID
+
+        if 'value' not in jsonResponse or len(jsonResponse['value']) == 0: 
+            print("\nMachine not found with the name {0}. Please try again.".format(DeviceName))
+            return 0
+
+        return jsonResponse['value'][0]['id'] # Return the Machine ID if retrieved successfully
 
     except Exception as e:
-        print("An error occured: ", str(e))        
-        sys.exit(1) # Better to exit script on error
+        print("Failed to get machine ID with error:", str(e))    
+        return 0
 
-def get_MachineActions(DeviceName):
-    
-    aadToken = get_aadToken() # Get a valid auth token
-    MachineID = get_MachineID(DeviceName) # Get the Machine ID for the device
-    
-    url = "https://api.securitycenter.microsoft.com/api/machineactions?$filter=machineId eq '%s'&$top=5" % (MachineID)
-    url = url.replace(" ", "%20")
+def LR_getLibrary(): # Function for listing live response library files
+
+    print("\nListing live response library ...")
+    aadToken = get_aadToken()
+    url = "https://api.security.microsoft.com/api/libraryfiles"
 
     headers = {
         'Authorization' : "Bearer " + aadToken
@@ -94,64 +93,204 @@ def get_MachineActions(DeviceName):
         request = urllib.request.Request(url, headers=headers)
         response = urllib.request.urlopen(request)
         jsonResponse = json.loads(response.read())
+        response.close() # Close the HTTP response to free up resources
+        libraryData = jsonResponse['value']
+
+        print("\nFileName       CreatedBy       HasParameters       ParametersDesc      LastUpdateTime")
+        print("=================================================================================")
+        for data in libraryData:
+            print("{0}       {1}       {2}       {3}       {4}".format(data['fileName'], data['createdBy'], data['hasParameters'], data['parametersDescription'], data['lastUpdatedTime']))
+
+    except Exception as e:
+        print("\nAn error occured:", str(e))
+        response.close()
+
+def LR_runScript(machineID, scriptName, scriptDescription): # Function for running live response script
+
+    print("\nRunning live response script ...")
+    aadToken = get_aadToken()
+    url = "https://api.securitycenter.microsoft.com/api/machines/%s/runliveresponse" % (machineID)
+
+    headers = {
+        'Content-Type' : 'application/json',
+        'Authorization' : "Bearer " + aadToken
+    }
+
+    Commands = [
+        {
+            "type" : "RunScript",
+            "params" : [
+                {
+                    "key" : "ScriptName",
+                    "value" : scriptName
+                }
+            ]
+        }
+    ]
+
+    body = {
+        "Commands" : Commands,
+        "Comment" : scriptDescription
+    }
+
+    data = json.dumps(body).encode("utf-8")
+
+    try :
+        # response = requests.post(url, json=body, headers=headers)
+        req = urllib.request.Request(url, data=data, headers=headers)
+        response = urllib.request.urlopen(req)
+        jsonResponse = json.loads(response.read())
+        response.close()
+
+        print(jsonResponse)
+        
+    except Exception as e:
+        print("An error occured, failed to run script with live response:", str(e))
+
+def LR_uploadScript(fileToUpload, fileDesc): # Function for uploading live response script
+
+    print("\nUploading script to library ...")
+
+    filePath = os.path.join(os.path.dirname(__file__), fileToUpload)
+    try:
+        file = open(filePath, 'rb')
+    except Exception as e:
+        return e
+
+    aadToken = get_aadToken()
+    url = "https://api.security.microsoft.com/api/libraryfiles"
+
+    # Here, we don't need to pass multipart/form-data to the header content since requests already does this for us
+    headers = { 'Authorization' : "Bearer " + aadToken }
+    files = { 'file' : file }
+    data = { 'Description' : fileDesc, 'OverrideIfExists' : 'true' }
+
+    try:
+        response = requests.post(url, data=data, files=files, headers=headers)
+        response.close() # Close the HTTP response to free up resources
+        print("Library has now been updated.")
+        return 200 # Return a successful response
+
+    except Exception as e:
+        print("\nAn error occured, failed to upload script: ", str(e))
+        return 0
+
+def run_LiveResponse(DeviceName): # Main function for running live response
+
+    MachineID = get_MachineID(DeviceName) # Get machineID of provided device
+    print(MachineID)
+
+    while True:
+            
+        print("\n*****************************************************************")
+        print("You are running live response for device {0}".format(DeviceName))
+        print("[1] Run a PS script   [2] Check live response library   [0] Exit live response")
+        print("*****************************************************************")
+        choice = input("Enter here: ")
+
+        if choice == '1': 
+            print("\nYou choose to run a PS script. This option will upload your PS script in live response library, overwrite any existing with the same name and execute it from the library.")
+            print("Should you wish not to overwrite, either rename your script with a SOCIR prefix or check first in live response library for any existing script you might overwrite.")
+            
+            scriptName = input("\n** Please provide script name (e.g testScript.ps1): ")
+            scriptDescription = input("** Please provide comment reason for this action: ")
+            
+            # Validate script name and description if not empty, if not, then upload the script
+            if not scriptName or not scriptDescription:
+                print("Please provide script name and description to upload.")
+            else:
+                resp = LR_uploadScript(scriptName, scriptDescription) # First upload script to library, overwrite by default               
+                if resp == 200: LR_runScript(MachineID, scriptName, scriptDescription) # Check if response after uploading is 200 - this means the upload was successful and script should be in library and we can run it
+                else: print("Failed to upload script with", resp)
+
+        elif choice == '2': LR_getLibrary()
+        elif choice == '0': return
+        else: print("\nInvalid choice. Please try again.")
+
+def get_MachineActions(DeviceName):
+    
+    print("\nGetting Machine Action History ...")
+    aadToken = get_aadToken() # Get a valid auth token
+    MachineID = get_MachineID(DeviceName)
+    if MachineID == 0: return 0
+    
+    url = "https://api.securitycenter.microsoft.com/api/machineactions?$filter=machineId eq '%s'&$top=5" % (MachineID)
+    url = url.replace(" ", "%20")
+
+    headers = { 'Authorization' : "Bearer " + aadToken }
+
+    try :
+        request = urllib.request.Request(url, headers=headers)
+        response = urllib.request.urlopen(request)
+        jsonResponse = json.loads(response.read())
         
         if 'value' not in jsonResponse or len(jsonResponse['value']) == 0: return 0 # return 0 if no machine found
-        MachineActions = jsonResponse['value']
         response.close() # Close the HTTP response to free up resources
-
         print("Response retrieved successfully.")
         print("\nFollowing 5 latest machine actions for device {0}:".format(DeviceName))
         
-        for action in MachineActions:
+        for action in jsonResponse['value']: # Iterate over list of machine actions
             actionId = action['id']
             actionType = action['type']
             status = action['status']
             createdTime = action['creationDateTimeUtc']
             updatedTime = action['lastUpdateDateTimeUtc']
             scantype = action['scope']
-
             print("\nAction ID: {0}, \nAction Type: {1}, \nStatus: {2}, \nCreated Time: {3}, \nUpdated Time: {4}, \nScan Type: {5}".format(actionId, actionType, status, createdTime, updatedTime, scantype))
         
     except Exception as e:
         print("An error occured: ", str(e))        
-        sys.exit(1) # Better to exit script on error
 
 def get_InstalledSoftware(DeviceName):
 
+    print("\nGetting Installed Software ...")
     aadToken = get_aadToken()
     MachineID = get_MachineID(DeviceName)
     if MachineID == 0: return 0
 
     url = "https://api.security.microsoft.com/api/machines/%s/software" % (MachineID)
     
-    headers = {
-        'Authorization' : "Bearer " + aadToken        
-    }
+    headers = { 'Authorization' : "Bearer " + aadToken }
     
     try:
         request = urllib.request.Request(url, headers=headers)
         response = urllib.request.urlopen(request)
         jsonResponse = json.loads(response.read())
-        listOfSoftware = jsonResponse['value']
         response.close()    
-
         print("Response retrieved successfully.")
         print("\nFollowing list of installed software on device {0}:".format(DeviceName))
 
-        for software in listOfSoftware:
+        for software in jsonResponse['value']: # Iterate over list of software
             softwareName = software['name']
             softwareId = software['id']
             softwareVendor = software['vendor']
-            
             print(" \nName: {0} \n ID: {1} \n Vendor: {2}".format(softwareName, softwareId, softwareVendor))
             
     except Exception as e:
         print("An error occured: ", str(e))
-        sys.exit(1)
 
-def generate_InvestigationPackage(DeviceName):
-    
+def get_InvestigationPackageURi(MachineID):
+
+    print("\nGetting Investigation Package URI ...")
     aadToken = get_aadToken()
+    url = "https://api.securitycenter.microsoft.com/api/machineactions/%s/GetPackageUri" % (MachineID)
+    
+    headers = { 'Authorization' : "Bearer " + aadToken }
+
+    try:
+        request = urllib.request.Request(url, headers=headers)        
+        response = urllib.request.urlopen(request)
+        jsonResponse = json.loads(response.read())
+        response.close()
+        print("\nAccess the following URI to download the investigation package: ", jsonResponse['value']) # This will contain the URI provided by the json response
+    
+    except Exception as e: # If a collection is still pending, this returns 400 Bad Request. Just print the machine action in this case.    
+        print("Collection investigation package is still pending or you may have supplied the incorrect ID. You can try verifying machine action status instead.") 
+
+def run_GenerateInvestigationPackage(DeviceName):
+    
+    print("\nGenerating Investigation Package ...")
+    aadToken = get_aadToken() # Get a valid auth token
     MachineID = get_MachineID(DeviceName)
     if MachineID == 0: return 0
 
@@ -162,9 +301,7 @@ def generate_InvestigationPackage(DeviceName):
         'Authorization' : "Bearer " + aadToken
     }
 
-    body = {
-        'Comment' : "Collecting investigation package for device " + DeviceName
-    }
+    body = { 'Comment' : "Collecting investigation package for device " + DeviceName }
     
     try:
         data = json.dumps(body).encode('utf-8')
@@ -172,42 +309,33 @@ def generate_InvestigationPackage(DeviceName):
         response = urllib.request.urlopen(request)
         jsonResponse = json.loads(response.read())
         response.close()
-        
+
         print("\nCollection investigation package is now {0} for device {1}".format(jsonResponse['status'], DeviceName))
         print("Machine action ID: {0}".format(jsonResponse['id']))
+
         return jsonResponse['id'] # return the machine action ID for retrieve the URi
         
-    except Exception as e:
-        # If a collection is already running, this returns 400 Bad Request. Just print the machine action in this case.    
-        print("Collection investigation package is already pending for device {0}".format(DeviceName))
-        print("You can run 'Get Machine Action History' to check status of pending actions.")
+    except Exception as e: # If a collection is already running, this returns 400 Bad Request. Just print the machine action in this case.
+        print("Collection investigation package is already pending for device {0}. You can also run 'Get Machine Action History' to check status of pending actions.".format(DeviceName))
         return 400
 
-def get_InvestigationPackageURi(MachineID):
+def run_MultipleAVScan(DeviceFileName, Comment, ScanType):
 
-    aadToken = get_aadToken()
+    filePath = os.path.join(os.path.dirname(__file__), DeviceFileName) # This is ensure we pass the correct filepath even if we are trying to run the script from another directory
+    try:    
+        with open(filePath, 'r') as read_obj:
+            csv_reader = csv.reader(read_obj)            
+            listOfDevices = list(csv_reader)
 
-    url = "https://api.securitycenter.microsoft.com/api/machineactions/%s/GetPackageUri" % (MachineID)
-    
-    headers = {
-        'Authorization' : "Bearer " + aadToken
-    }
-
-    try:
-        request = urllib.request.Request(url, headers=headers)        
-        response = urllib.request.urlopen(request)
-        jsonResponse = json.loads(response.read())
-        response.close()
-
-        print("\nAccess the following URI to download the investigation package: ")        
-        print(jsonResponse['value'])         
-    
+        for device in listOfDevices:
+            run_AntivirusScan(device[0], Comment, ScanType)
+            
     except Exception as e:
-        # If a collection is still pending, this returns 400 Bad Request. Just print the machine action in this case.    
-        print("Collection investigation package is still pending or you may have supplied the incorrect ID. Please try again.")
+        print("An error occured when reading file: ", str(e))
 
 def run_AntivirusScan(DeviceName, Comment, ScanType):
 
+    print("\nRunning {0} Anti-virus Scan for {1} ...".format(ScanType, DeviceName))
     aadToken = get_aadToken() # Get a valid auth token
     MachineID = get_MachineID(DeviceName)
     if MachineID == 0: return 0
@@ -232,19 +360,14 @@ def run_AntivirusScan(DeviceName, Comment, ScanType):
         response.close() # Close the HTTP response to free up resources
          
         print("\nAntivirus scan has been initiated for {0}.".format(DeviceName))
-        actionId = jsonResponse['id']
-        actionType = jsonResponse['type']
-        machineID = jsonResponse['machineId']
-        status = jsonResponse['status']
+        print("** Machine Action ID: {0} \n** Action Type: {1} \n** Machine ID: {2} \n** Status: {3}".format(jsonResponse['id'], jsonResponse['type'], jsonResponse['machineId'], jsonResponse['status']))
 
-        print(" \nMachine Action ID: {0} \nAction Type: {1} \nMachine ID: {2} \nStatus: {3}".format(actionId, actionType, machineID, status))
-
-    except Exception as e:
-        # print("An error occured: ", str(e)) # Uncomment for debugging purposes        
-        print("\nPossible a scan is already pending for this device. You can verify machine action history for pending scans.")
+    except Exception as e:    
+        print("\nPossible a scan is already pending for device {0}. You can verify machine action history for pending scans.".format(DeviceName))
 
 def run_IsolateDevice(DeviceName, Comment, IsolationType):
 
+    print("\nIsolating device from the network ...")
     aadToken = get_aadToken() # Get a valid auth token
     MachineID = get_MachineID(DeviceName)
     if MachineID == 0: return 0
@@ -271,10 +394,12 @@ def run_IsolateDevice(DeviceName, Comment, IsolationType):
         print("\nMachine Action ID: {0} \nAction: {1} \nComment: {2} \nStatus:{3}".format(jsonResponse['id'], jsonResponse['type'], jsonResponse['requestorComment'], jsonResponse['status']))
         
     except Exception as e:
-        print("An error occured: ", str(e))        
+        print("An error occured: ", str(e))   
         sys.exit(1) # Better to exit script on error
 
 def run_UnisolateDevice(DeviceName, Comment):
+
+    print("\nReconnecting device back to the network ...")
 
     aadToken = get_aadToken() # Get a valid auth token
     MachineID = get_MachineID(DeviceName)
@@ -287,9 +412,7 @@ def run_UnisolateDevice(DeviceName, Comment):
         'Authorization' : "Bearer " + aadToken
     }
     
-    body = {
-        'Comment' : Comment
-    }
+    body = { 'Comment' : Comment }
 
     try :
         data = json.dumps(body).encode("utf-8")
@@ -301,7 +424,7 @@ def run_UnisolateDevice(DeviceName, Comment):
         print("\nMachine Action ID: {0} \nAction: {1} \nComment: {2} \nStatus:{3}".format(jsonResponse['id'], jsonResponse['type'], jsonResponse['requestorComment'], jsonResponse['status']))
 
     except Exception as e:
-        print("An error occured: ", str(e))        
+        print("An error occured: ", str(e))    
         sys.exit(1) # Better to exit script on error
 
 ####################################################################################
@@ -309,7 +432,7 @@ def run_UnisolateDevice(DeviceName, Comment):
 def validateIRAction(action):
         
     if action == '1': # Run AV scan
-        DeviceName = input("Please provide the device name: ")
+        DeviceName = input("\nPlease provide the device name: ")
         Comment = str(input("Please provide an action comment: "))
         ScanType = input("Please choose Scan Type: (Quick/Full): ")
 
@@ -321,91 +444,98 @@ def validateIRAction(action):
             print("Invalid scan type. Please enter 'Quick' or 'Full'.")
             return
 
-        print("\nRunning Anti-virus Scan ...")
         if ScanType.lower() == 'quick':
             run_AntivirusScan(DeviceName, Comment, "Quick")
         elif ScanType.lower() == 'full':
             run_AntivirusScan(DeviceName, Comment, "Full")
         
     elif action == '2': # Run device isolation
-        DeviceName = input("Please provide the device name: ")
+        DeviceName = input("\nPlease provide the device name: ")
         Comment = input("Please provide an action comment: ")
-        IsolationType = "Full" # Default isolation type for now
 
-        if not DeviceName or not Comment:
-            print("All fields are required. Please try again.")
-        else:        
-            print("\nIsolating device from the network ...")
-            run_IsolateDevice(DeviceName, Comment, IsolationType)
+        print("All fields are required. Please try again.") if not DeviceName or not Comment else run_IsolateDevice(DeviceName, Comment, "Full") # Set isolation type as FULL by default for now
 
     elif action == '3': # Unisolate device
-        DeviceName = input("Please provide the device name: ")
+        DeviceName = input("\nPlease provide the device name: ")
         Comment = input("Please provide an action comment: ")
 
-        if not DeviceName or not Comment:
-            print("All fields are required. Please try again.")
-        else:        
-            print("\nReconnecting device back to the network ...")
-            run_UnisolateDevice(DeviceName, Comment)
+        print("All fields are required. Please try again.") if not DeviceName or not Comment else run_UnisolateDevice(DeviceName, Comment)
             
     elif action == '4': # Get collection investigation package
-        print("Please choose from the following: ")
-        print("1 - Generate Investigation Package")
-        print("2 - Get Investigation Package URI")
-        ch = str(input("Enter here: "))
+        print("\nPlease choose from the following: [1] - Generate Investigation Package    [2] - Get Investigation Package URI")
+        ch = str(input("Enter here (1 or 2): "))
         
         if ch == '1':
             DeviceName = input("Please provide the device name: ")
-            if not DeviceName: print("Device Name is required. Please try again.")
-            else: 
-                print("\nGenerating Investigation Package ...")
-                generate_InvestigationPackage(DeviceName)        
+            print("Device Name is required. Please try again.") if not DeviceName else run_GenerateInvestigationPackage(DeviceName)        
+
         elif ch == '2':            
             MachineActionId = input("Please provide the Machine Action ID: ")
-            if not MachineActionId: 
-                print("Machine Action ID is required. You can check Machine Action History to get the ID.")
-            else:
-                print("\nGetting Investigation Package URI ...")
-                get_InvestigationPackageURi(MachineActionId)       
+            print("Machine Action ID is required. You can check Machine Action History to get the ID.") if not MachineActionId else get_InvestigationPackageURi(MachineActionId)       
+ 
         else: print("Invalid option. Please try again.")         
             
     elif action == '5': # Run multiple AV scans
-        print("Please provide list of machines for scanning")
-        # Add code to provide machine status
+        print("\nMake sure the .csv file is within the same folder as the script.")
+        listOfDevices = input("Please provide list of machines for scanning in .csv: ")
+        Comment = input("Please provide an action comment: ")
+        ScanType = input("Please choose Scan Type: (Quick/Full): ")
+
+        if not listOfDevices or not Comment or not ScanType:
+            print("All fields are required. Please try again.")
+            return
+
+        scan_type = ScanType.lower()
+        if scan_type == 'quick':
+            run_MultipleAVScan(listOfDevices, Comment, 'Quick')
+        elif scan_type == 'full':
+            run_MultipleAVScan(listOfDevices, Comment, 'Full')            
+        else: 
+            print("Invalid scan type. Please enter 'Quick' or 'Full'.")
 
     elif action == '6': # Get installed software
-        DeviceName = input("Please provide the device name: ")
-                
-        if not DeviceName: print("Device Name is required. Please try again.")
-        else:
-            print("\nGetting Installed Software ...")
-            get_InstalledSoftware(DeviceName)
+        DeviceName = input("\nPlease provide the device name: ")                
+        print("Device Name is required. Please try again.") if not DeviceName else get_InstalledSoftware(DeviceName)
 
     elif action == '7': # Get machine action history
-        DeviceName = input("Please provide the device name: ")
+        DeviceName = input("\nPlease provide the device name: ")
+        print("Device Name is required. Please try again.") if not DeviceName else get_MachineActions(DeviceName)
 
-        if not DeviceName: print("Device Name is required. Please try again.")
-        else:
-            print("\nGetting Machine Action History ...")
-            get_MachineActions(DeviceName)
-            
+    elif action == '8': # Run live response on a device
+        DeviceName = input("\nPlease provide the device name: ") 
+        print("Device Name is required. Please try again.") if not DeviceName else run_LiveResponse(DeviceName)
+
     elif action == '0': sys.exit(0) # Exit script
-    else: print("Invalid option. Please try again.")
-        
+
+    else: print("\nInvalid option. Please try again.")
+
 if __name__ == '__main__':
 
+    print("\n####################################################")
+    print("#                         ______                   #")
+    print("#    ____  _____  ____   \_   __\____              #")
+    print("#   /  __||  _  ||  __|    / /  /    \             #")
+    print("#   \___ \| |_| || |__    / /  /    _/             #")
+    print("#   |____/|_____||____|/\/ /__/ /| |               #")
+    print("#                      \_____/ / | | v 1.2         #")
+    print("#                                                  #")
+    print("#  Security Operations tool for incident response  #")
+    print("#                                                  #")
+    print("####################################################")
+
     while True:
-        print("\n========================================================")
+        print("\n===============================================================")
         print("\nPlease choose from the following options:")
         print("[1] - Run Anti-virus Scan")
         print("[2] - Run Device Isolation")
         print("[3] - Unisolate Device")
         print("[4] - Collect Investigation Package")
-        print("5 - Run multiple Anti-virus scans")
+        print("[5] - Run multiple Anti-virus scans")
         print("[6] - Get Installed Software")
         print("[7] - Get Machine Action History")
+        print("[8] - Run Live Response Session")
         print("0 - Exit")
-        print("\n========================================================")
+        print("\n===============================================================")
         action = str(input("Enter here: "))
     
         validateIRAction(action)
