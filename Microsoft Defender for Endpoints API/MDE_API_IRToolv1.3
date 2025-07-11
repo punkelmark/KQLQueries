@@ -1,9 +1,9 @@
 #
-# Title: MDE IR Action Script
+# Title: SOCIR Tool Script
 # Description: This script written in Python provides a set of functions to interact with Microsoft Defender for Endpoint API for Incident Response (IR) actions.
 # Author: Elmark Corpus
 # Creation Date: 2025-06-20
-# Version: 1.2
+# Version: 1.3
 #
 # This version provides basic machine actions for automating incident response such as single device scan, collecting investigation packages, device isolation, listing installed software and getting machine actions history
 # This is a work in progress (WIP) to continue in innovating workflows for streamlining incident response by leverage MDE APIs
@@ -12,6 +12,7 @@
 #
 # v 1.1 - Added multiple AV scan - 6/27/2025
 # v 1.2 - Added capability to upload and scripts in LR library - 7/8/2025
+# v 1.3 - Made modifications to have filed downloads saved under '%USERPROFILE%/SOCIR/' directory - 7/11/2025
 #                
 
 import json
@@ -21,13 +22,14 @@ import requests
 import sys
 import csv
 import os
+import pandas as pd
 
 def get_aadToken():
 
     # Hard-coding is NOT a good practice, this is usually integrated with some secrets manager to pull sensitive info - will improve handling for this in the future
-    tenantId = "########-####-####-####-############" # Paste  tenant ID here 
-    appId = "########-####-####-####-############" # Paste app ID here 
-    appSecret = "########-####-####-####-############" # Paste app secret here
+    tenantId = "########-########-########-########-########" # Paste  tenant ID here 
+    appId = "########-########-########-########-########" # Paste app ID here 
+    appSecret = "########-########-########-########-########" # Paste app secret here
     
     resourceAppIdUri = "https://api.securitycenter.microsoft.com"
     url = "https://login.microsoftonline.com/%s/oauth2/token" % (tenantId)
@@ -236,7 +238,7 @@ def get_MachineActions(DeviceName):
             createdTime = action['creationDateTimeUtc']
             updatedTime = action['lastUpdateDateTimeUtc']
             scantype = action['scope']
-            print("\nAction ID: {0}, \nAction Type: {1}, \nStatus: {2}, \nCreated Time: {3}, \nUpdated Time: {4}, \nScan Type: {5}".format(actionId, actionType, status, createdTime, updatedTime, scantype))
+            print("\nMachine Action ID: {0}, \nAction Type: {1}, \nStatus: {2}, \nCreated Time: {3}, \nUpdated Time: {4}, \nScan Type: {5}".format(actionId, actionType, status, createdTime, updatedTime, scantype))
         
     except Exception as e:
         print("An error occured: ", str(e))        
@@ -260,20 +262,20 @@ def get_InstalledSoftware(DeviceName):
         print("Response retrieved successfully.")
         print("\nFollowing list of installed software on device {0}:".format(DeviceName))
 
-        for software in jsonResponse['value']: # Iterate over list of software
-            softwareName = software['name']
-            softwareId = software['id']
-            softwareVendor = software['vendor']
-            print(" \nName: {0} \n ID: {1} \n Vendor: {2}".format(softwareName, softwareId, softwareVendor))
+        json_str = json.dumps(jsonResponse["value"])
+        if not os.path.isdir("SOCIR"): os.mkdir("SOCIR") # make directory first should it not exist in machine
+        outputFileName = "SOCIR/%s_ListInstalledSoftware.xlsx" % (DeviceName)
+        pd.read_json(json_str).to_excel(outputFileName)
+        print("\nInstalled software report generated successfully. See '%USERPROFILE%\SOCIR' for generated .xlsx file.")
             
     except Exception as e:
         print("An error occured: ", str(e))
 
-def get_InvestigationPackageURi(MachineID):
+def get_InvestigationPackageURi(MachineActionID):
 
     print("\nGetting Investigation Package URI ...")
     aadToken = get_aadToken()
-    url = "https://api.securitycenter.microsoft.com/api/machineactions/%s/GetPackageUri" % (MachineID)
+    url = "https://api.securitycenter.microsoft.com/api/machineactions/%s/GetPackageUri" % (MachineActionID)
     
     headers = { 'Authorization' : "Bearer " + aadToken }
 
@@ -282,10 +284,18 @@ def get_InvestigationPackageURi(MachineID):
         response = urllib.request.urlopen(request)
         jsonResponse = json.loads(response.read())
         response.close()
-        print("\nAccess the following URI to download the investigation package: ", jsonResponse['value']) # This will contain the URI provided by the json response
+
+        response_uri = jsonResponse['value'] # This will contain the URI provided by the json response
+
+        if not os.path.isdir("SOCIR"): os.mkdir("SOCIR") # make directory first should it not exist in machine
+        outputFileName = "SOCIR/InvestigationPackage_%s.zip" % (MachineActionID)
+        urllib.request.urlretrieve(response_uri, outputFileName) # Download the package using the provided URI
     
-    except Exception as e: # If a collection is still pending, this returns 400 Bad Request. Just print the machine action in this case.    
-        print("Collection investigation package is still pending or you may have supplied the incorrect ID. You can try verifying machine action status instead.") 
+        print("\nPackage retrieved successfully. See '%USERPROFILE%\SOCIR' for downloaded .zip file.")
+
+    except Exception as e: # If a collection is still pending, this returns 400 Bad Request. If invalid URL, it will return error 403.
+        if str(e)[11:14] == '403': print("Invalid investigation package URI, you might need to generate another investigation package as previous ones may expire.") # Check if response is 403 - which means invalid URI or package is no longer available for download
+        else: print("Collection investigation package is still pending or you may have supplied the incorrect ID. You can verify the machine action status by getting its machine action history if it's still pending or not.") 
 
 def run_GenerateInvestigationPackage(DeviceName):
     
@@ -358,7 +368,9 @@ def run_AntivirusScan(DeviceName, Comment, ScanType):
         response = urllib.request.urlopen(request)
         jsonResponse = json.loads(response.read())
         response.close() # Close the HTTP response to free up resources
-         
+
+        print(jsonResponse)
+
         print("\nAntivirus scan has been initiated for {0}.".format(DeviceName))
         print("** Machine Action ID: {0} \n** Action Type: {1} \n** Machine ID: {2} \n** Status: {3}".format(jsonResponse['id'], jsonResponse['type'], jsonResponse['machineId'], jsonResponse['status']))
 
@@ -426,6 +438,30 @@ def run_UnisolateDevice(DeviceName, Comment):
     except Exception as e:
         print("An error occured: ", str(e))    
         sys.exit(1) # Better to exit script on error
+
+def run_DeviceHealthReport():
+
+    print("\nRetrieving device AV health report ...")
+    aadToken = get_aadToken() # Get a valid auth token
+    
+    url = "https://api.security.microsoft.com/api/deviceavinfo"
+
+    headers = { 'Authorization' : "Bearer " + aadToken }
+
+    try :
+        request = urllib.request.Request(url, headers=headers)
+        response = urllib.request.urlopen(request)
+        jsonResponse = json.loads(response.read())
+        response.close() # Close the HTTP response to free up resources
+
+        json_str = json.dumps(jsonResponse["value"])
+        if not os.path.isdir("SOCIR"): os.mkdir("SOCIR") # make directory first should it not exist in machine
+        pd.read_json(json_str).to_excel("SOCIR/DeviceAVHealthReport.xlsx")
+
+        print("\nReport generated successfully. See '%USERPROFILE%\SOCIR' for generated .xlsx file.")
+
+    except Exception as e:    
+        print("An error occured: ", str(e))    
 
 ####################################################################################
 
@@ -505,6 +541,20 @@ def validateIRAction(action):
         DeviceName = input("\nPlease provide the device name: ") 
         print("Device Name is required. Please try again.") if not DeviceName else run_LiveResponse(DeviceName)
 
+    elif action == '9': run_DeviceHealthReport() # Export device antivirus health report
+
+    elif action == 'help':
+
+        print("\n*** Run Anti-virus Scan : run quick/full anti-virus scan on a device")
+        print("*** Run Device Isolation : isolate a device from the network and only connect it via Defender service")
+        print("*** Unisolate Device : reconnect device back to the network")
+        print("*** Collect Investigation Package : collect defender investigation package for forensic investigation on a device, see - https://learn.microsoft.com/en-us/defender-endpoint/respond-machine-alerts#collect-investigation-package-from-devices")
+        print("*** Run multiple Anti-virus scans : run a bulk anti-virus scan for multiple devices, must provide .csv containing list of devices")
+        print("*** Get Installed Software : get list of installed software based on the device's inventory")
+        print("*** Get Machine Action History : get top 5 machine actions executed on a device")
+        print("*** Run Live Response Session : conduct a live response session on a device")
+        print("*** Get Device Anti-virus Health Report : pull anti-virus health report for all onboarded machines in our Defender tenant")
+
     elif action == '0': sys.exit(0) # Exit script
 
     else: print("\nInvalid option. Please try again.")
@@ -517,7 +567,7 @@ if __name__ == '__main__':
     print("#   /  __||  _  ||  __|    / /  /    \             #")
     print("#   \___ \| |_| || |__    / /  /    _/             #")
     print("#   |____/|_____||____|/\/ /__/ /| |               #")
-    print("#                      \_____/ / | | v 1.2         #")
+    print("#                      \_____/ / | | v 1.3         #")
     print("#                                                  #")
     print("#  Security Operations tool for incident response  #")
     print("#                                                  #")
@@ -534,7 +584,10 @@ if __name__ == '__main__':
         print("[6] - Get Installed Software")
         print("[7] - Get Machine Action History")
         print("[8] - Run Live Response Session")
-        print("0 - Exit")
+        print("[9] - Get Device Antivirus Health Report")
+        print("[B] - Get browser extension")
+        print("[0] - Exit")
+        print("\nEnter 'help' to get more info on each machine action")
         print("\n===============================================================")
         action = str(input("Enter here: "))
     
