@@ -1,7 +1,7 @@
 // Title: Suspicious Browser Extension (Chrome)
 // Author: Elmark Corpus
 // Created: 8-20-2025
-// Description: Checks for suspicious chrome browser extensions by getting rarely created .crx files under DeviceFileEvents table
+// Description: Custom query that checks for suspicious chrome browser extensions by getting rarely created .crx files under DeviceFileEvents table
 
 DeviceFileEvents
 | where TimeGenerated >= ago(30d)
