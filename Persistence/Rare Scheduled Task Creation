@@ -1,0 +1,34 @@
+// Name: Rare Scheduled Task Creation v.1
+// Created: 8/20/2025
+// Author: Elmark Corpus
+// Description: This query checks for rare scheduled task creation based on daily occurrence per task name and the file which created it. This has room for improvement in terms of other conditions to filter out suspicious/malicious scheduled task creation in our environment. The query joins events under DPE and DE tables as they provide unique set of task details that can help correlate and immediately give details for analysts such as task triggers, file hashes, affected devices, etc. Both tables have different formats and string manipulations to acquire the task name, this is then used to match events between the two tables.
+
+// Other Recommendations: Use this with a 14d lookback period, which should be enough to capture reoccurrence of scheduled task creations. You can also filter out distinct InitiatingFileNames by aggregating related tasks under that file. You can also extend this query to correlated tasks deleted in some scenarios.
+
+DeviceProcessEvents
+| where FileName has "schtasks" and ProcessCommandLine has "/create" // Filter new created scheduled tasks
+| mv-expand TaskName=split(ProcessCommandLine, '/') // Split command line to get TaskName attribute
+| extend TaskName=iff(TaskName startswith "tn", replace_string(trim('"', substring(TaskName, 3)), '"', ""), "") // String extraction and manipulation to get TaskName
+| where isnotempty(TaskName) // Remove empty duplicates
+| summarize
+    Occurrences=count(), // Count occurrence of the scheduled task
+    ProcessCommandLine=make_set(ProcessCommandLine, 10),
+    FileAttributes=make_bag(bag_pack("SHA256", InitiatingProcessSHA256, "FolderPath", InitiatingProcessFolderPath, "ParentFileName", InitiatingProcessParentFileName)) // Summarize key-value pairs for task details
+    by InitiatingFileName=InitiatingProcessFileName, TaskName, bin(TimeGenerated, 1d) // Summarize scheduled tasks per task name and file created it, per day
+| summarize
+    TaskDetails=make_bag(bag_pack("FileAttributes", FileAttributes, "ProcessCommandLine", ProcessCommandLine)), // Summarize task details again
+    Reoccurrences=count() // This time we count how many days scheduled tasks gets consistently created, to filter out rare ones from the rest
+    by InitiatingFileName, TaskName=trim(@"\s+", TaskName) // Trim white spaces so that join comparison can work
+| join kind=innerunique (
+    DeviceEvents
+    | where ActionType has "ScheduledTaskCreated"
+    | project
+        TimeGenerated,
+        DeviceName,
+        TaskName = trim(@"\s+", replace_string(tostring(AdditionalFields.TaskName), '\\', "")), // Trim white spaces so that join comparison can work
+        TaskContent = tostring(AdditionalFields.TaskContent) 
+    )
+    on TaskName
+| where Reoccurrences < 2
+| summarize AffectedDevices=make_set(DeviceName), TaskDetails=make_list(TaskDetails, 100), TaskContent=make_list(TaskContent, 100) by TaskName, InitiatingFileName
+| extend NumberOfDevices=array_length(AffectedDevices)
